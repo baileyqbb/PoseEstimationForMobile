@@ -22,6 +22,7 @@ import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
+import org.opencv.video.KalmanFilter;
 
 import com.xiaomi.mace.JniMaceUtils;
 
@@ -31,6 +32,8 @@ import java.io.IOException;
 public class PoseEstimationFloatInception extends PoseEstimation {
     private Mat mMat;
 
+    private KalmanFilter KF = new KalmanFilter(56, 28);
+
     /**
      * Initializes an {@code PoseEstimation}.
      *
@@ -38,8 +41,20 @@ public class PoseEstimationFloatInception extends PoseEstimation {
      */
     PoseEstimationFloatInception(Activity activity) throws IOException {
         super(activity);
+        initKalmanFilter();
     }
 
+
+    private void initKalmanFilter(){
+        Mat tM = new Mat.eye(56, 56, CvType.CV_32F); //Construct transitionMatrix
+        for (int i = 0; i < 28; i++){
+            tM[i, i+28] = 1.0f;
+        } 
+        KF.set_transitionMatrix(tM);
+
+        Mat mM = new Mat.eye(28, 56, CvType.CV_32F); //Construct measurementMatrix
+        KF.set_measurementMatrix(mM);
+    }
 
     @Override
     protected int getImageSizeX() {
@@ -129,6 +144,8 @@ public class PoseEstimationFloatInception extends PoseEstimation {
             mPrintPointArray[1][i] = maxX;
         }
 
+
+
         Log.i("post_processing", "" + (System.currentTimeMillis() - st));
     }
 
@@ -136,5 +153,17 @@ public class PoseEstimationFloatInception extends PoseEstimation {
         if (x < 0 || y < 0 || x >= getOutputSizeX() || y >= getOutputSizeY())
             return -1;
         return arr[x * getOutputSizeX() + y];
+    }
+
+    private float flatten2d(float[][] mat){
+        int rows = mat.length;
+        int cols = mat[0].length;
+        float result[] = new float[rows * cols];
+        for (int i = 0; i < cols; i ++){
+            for (int j = 0; j < rows; j++){
+                result[i*rows + j] = mat[j][i];
+            }
+        }
+        return result;
     }
 }
