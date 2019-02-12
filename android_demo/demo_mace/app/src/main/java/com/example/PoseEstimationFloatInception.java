@@ -32,7 +32,10 @@ import java.io.IOException;
 public class PoseEstimationFloatInception extends PoseEstimation {
     private Mat mMat;
 
-    private KalmanFilter KF = new KalmanFilter(56, 28);
+    const static final int jointNum = 14;      // Depends on the pose estimatation model outputs.
+    private int KF_stateNum = 56;
+    private int KF_measureNum = 28;
+    private KalmanFilter KF = new KalmanFilter(KF_stateNum, KF_measureNum, CvType.CV_32F);
 
     /**
      * Initializes an {@code PoseEstimation}.
@@ -46,14 +49,17 @@ public class PoseEstimationFloatInception extends PoseEstimation {
 
 
     private void initKalmanFilter(){
-        Mat tM = new Mat.eye(56, 56, CvType.CV_32F); //Construct transitionMatrix
-        for (int i = 0; i < 28; i++){
-            tM[i, i+28] = 1.0f;
+        Mat tM = new Mat.eye(KF_stateNum, KF_stateNum, CvType.CV_32F); //Construct transitionMatrix
+        for (int i = 0; i < KF_measureNum; i++){
+            tM[i, i+KF_measureNum] = 1.0f;
         } 
         KF.set_transitionMatrix(tM);
 
-        Mat mM = new Mat.eye(28, 56, CvType.CV_32F); //Construct measurementMatrix
+        Mat mM = new Mat.eye(KF_measureNum, KF_stateNum, CvType.CV_32F); //Construct measurementMatrix
         KF.set_measurementMatrix(mM);
+
+        Mat mStPost = new Mat(KF_stateNum, 1, CvType.CV_32F, new Scalar(1e-1)); //Construct State matrix
+        KF.set_statePre(mStPost);
     }
 
     @Override
@@ -90,7 +96,7 @@ public class PoseEstimationFloatInception extends PoseEstimation {
         float[] result = JniMaceUtils.maceMobilenetClassify(floatBuffer.array());
 
         if (mPrintPointArray == null)
-            mPrintPointArray = new float[2][14];
+            mPrintPointArray = new float[2][jointNum];
 
         if (!CameraActivity.isOpenCVInit)
             return;
@@ -104,11 +110,11 @@ public class PoseEstimationFloatInception extends PoseEstimation {
 
         long st = System.currentTimeMillis();
 
-        for (int i = 0; i < 14; i++) {
+        for (int i = 0; i < jointNum; i++) {
             int index = 0;
             for (int x = 0; x < 96; x++) {
                 for (int y = 0; y < 96; y++) {
-                    tempArray[index] = result[x * getOutputSizeY() * 14 + y * 14 + i];
+                    tempArray[index] = result[x * getOutputSizeY() * jointNum + y * jointNum + i];
                     index++;
                 }
             }
@@ -136,7 +142,7 @@ public class PoseEstimationFloatInception extends PoseEstimation {
             }
 
             if (max == 0) {
-                mPrintPointArray = new float[2][14];
+                mPrintPointArray = new float[2][jointNum];
                 return;
             }
 
@@ -144,7 +150,19 @@ public class PoseEstimationFloatInception extends PoseEstimation {
             mPrintPointArray[1][i] = maxX;
         }
 
+        
+        // Kalman filter -- prediction
+        Mat prediction = KF.predict()
 
+        // Kalman filter -- update
+        Mat tmpMat = flatten2d(mPrintPointArray);
+        KF.correct(tmpMat);
+
+        // ** update mPrintPointArray after KF.correct(), since mPrintPointArray will be used in KF.correct()
+        for(int i = 0; i < jointNum; i++){
+            mPrintPointArray[0][i] = prediction.get(2*i, 0)[0];
+            mPrintPointArray[1][i] = prediction.get(2*i+1, 0)[0];
+        }
 
         Log.i("post_processing", "" + (System.currentTimeMillis() - st));
     }
@@ -155,13 +173,13 @@ public class PoseEstimationFloatInception extends PoseEstimation {
         return arr[x * getOutputSizeX() + y];
     }
 
-    private float flatten2d(float[][] mat){
-        int rows = mat.length;
-        int cols = mat[0].length;
-        float result[] = new float[rows * cols];
+    private Mat flatten2d(float[][] arr){
+        int rows = arr.length;
+        int cols = arr[0].length;
+        Mat result = new Mat(rows * cols, 1, CvType.CV_32F, new Scalar(0));
         for (int i = 0; i < cols; i ++){
             for (int j = 0; j < rows; j++){
-                result[i*rows + j] = mat[j][i];
+                result[i*rows + j] = arr[j][i];
             }
         }
         return result;
